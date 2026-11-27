@@ -1,0 +1,8 @@
+config.json
+.env
+output/
+*.log
+kindle-digest
+kindle-digest.exe
+*.epub
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "miniflux_url": "https://miniflux.example.com",
+  "miniflux_api_key": "",
+  "kindle_email": "you@kindle.com",
+  "smtp_host": "smtp.example.com",
+  "smtp_port": 587,
+  "smtp_username": "",
+  "smtp_password": "",
+  "smtp_from": "",
+  "output_dir": "/opt/kindle-digest/output",
+  "log_file": "/opt/kindle-digest/kindle-digest.log",
+  "max_part_bytes": 4500000
+}
