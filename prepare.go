@@ -161,10 +161,7 @@ func prepareEntry(ctx context.Context, idx int, entry apiEntry, feed apiFeed, ma
 	}
 	wg.Wait()
 
-	feedTitle := feed.Title
-	if feedTitle == "" {
-		feedTitle = "Unknown feed"
-	}
+	feedTitle := displayFeedTitle(feed)
 	e := &preparedEntry{
 		Title:     entry.Title,
 		FeedTitle: feedTitle,

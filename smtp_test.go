@@ -13,7 +13,7 @@ func TestDigestBodyListsPartsAndCounts(t *testing.T) {
 		{entries: make([]*preparedEntry, 2), path: "/out/Daily Digest - 27 Nov 2026, Part 1.epub"},
 		{entries: make([]*preparedEntry, 1), path: "/out/Daily Digest - 27 Nov 2026, Part 2.epub"},
 	}
-	body := digestBody(parts, "27 Nov 2026")
+	body := digestBody(parts, "Daily Digest — 27 Nov 2026")
 	for _, want := range []string{
 		"Daily Digest — 27 Nov 2026",
 		"3 entries in 2 parts",

@@ -57,6 +57,33 @@ func TestLoadConfigDefaultsAndGenerateOnlyMode(t *testing.T) {
 	}
 }
 
+func TestLoadConfigPartLimitBoundaries(t *testing.T) {
+	tests := []struct {
+		name    string
+		bytes   int
+		wantErr bool
+	}{
+		{"floor accepted", 100_000, false},
+		{"below floor rejected", 99_999, true},
+		{"default accepted", 4_500_000, false},
+		{"ceiling accepted", 50_000_000, false},
+		{"above ceiling rejected", 50_000_001, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := validConfig()
+			raw["max_part_bytes"] = tt.bytes
+			_, err := loadConfig(writeConfigFile(t, raw))
+			if tt.wantErr && err == nil {
+				t.Fatal("loadConfig succeeded, want error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadConfigSendMode(t *testing.T) {
 	full := validConfig()
 	full["kindle_email"] = "reader@kindle.com"
@@ -85,7 +112,7 @@ func TestLoadConfigValidationErrors(t *testing.T) {
 		{"bad url scheme", func(c map[string]any) { c["miniflux_url"] = "ftp://example.org" }, "must be http or https"},
 		{"missing key", func(c map[string]any) { delete(c, "miniflux_api_key") }, "miniflux_api_key is required"},
 		{"missing output dir", func(c map[string]any) { delete(c, "output_dir") }, "output_dir is required"},
-		{"part limit too large", func(c map[string]any) { c["max_part_bytes"] = 5_000_001 }, "max_part_bytes must be between"},
+		{"part limit too large", func(c map[string]any) { c["max_part_bytes"] = 50_000_001 }, "max_part_bytes must be between"},
 		{"part limit too small", func(c map[string]any) { c["max_part_bytes"] = 10 }, "max_part_bytes must be between"},
 		{"incomplete smtp", func(c map[string]any) {
 			c["kindle_email"] = "reader@kindle.com"

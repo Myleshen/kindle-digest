@@ -9,5 +9,6 @@
   "smtp_from": "",
   "output_dir": "/opt/kindle-digest/output",
   "log_file": "/opt/kindle-digest/kindle-digest.log",
-  "max_part_bytes": 4500000
+  "max_part_bytes": 4500000,
+  "web_token": ""
 }
