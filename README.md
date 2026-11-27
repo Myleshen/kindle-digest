@@ -12,6 +12,7 @@ A single-binary Go CLI that turns a [Miniflux](https://miniflux.app) newsreader'
 - Adds a hand-built Contents page per part linking to those feed sections, plus an A–Z Index of every article in the part (`#` for titles starting with a digit, symbol or non-ASCII letter). Collection exports get the Index only.
 - Greedy-packs articles into parts, backing off to the last feed boundary instead of splitting a feed when the shortened part stays at least half full.
 - Emails each part to your `@kindle.com` address, one message per part, or runs generate-only when mail settings are absent.
+- Optionally folds newsletter emails into the same digest, read read-only over IMAP: one entry per email, grouped under the source's name, with images stripped.
 - Serves an optional single-page web UI (`-serve`) to trigger today's digest or a custom feed/window run and watch its status.
 - Logs to a file and exits non-zero on failure.
 
@@ -66,7 +67,22 @@ A complete config looks like this:
   "output_dir": "/opt/kindle-digest/output",
   "log_file": "/opt/kindle-digest/kindle-digest.log",
   "max_part_bytes": 4500000,
-  "web_token": "long-random-string-for-the-web-ui"
+  "web_token": "long-random-string-for-the-web-ui",
+  "imap_host": "imap.zoho.in",
+  "imap_port": 993,
+  "imap_username": "you@example.com",
+  "imap_password": "your-app-password",
+  "max_emails_total": 5,
+  "email_sources": [
+    {
+      "name": "Example Newsletter",
+      "folder": "Newsletters",
+      "from": "newsletter@example.com",
+      "from_name": "",
+      "subject_match": "",
+      "max_per_day": 1
+    }
+  ]
 }
 ```
 
@@ -105,6 +121,30 @@ On-demand runs are **generate-only** unless you pass `-send`; `-send` needs a co
 ```
 
 Windowed runs are named `Daily Digest - 26 Nov 2026 to 27 Nov 2026.epub` (a single date when the window sits inside one day). **A windowed run only sends with an explicit `-send`** — the plain daily cron run keeps auto-sending from the config. Combine with `-feed` for one feed's window.
+
+### Email sources
+
+Newsletter emails can join the same daily digest as a second content source. Each configured source is a folder plus a sender filter, and every matching email becomes one entry: the subject is the title and the email body is the article. Email sections merge into the same alphabetical grouping, Contents page and A–Z Index as the RSS feeds, under the source's `name` (for example `TLDR AI`).
+
+```json
+"email_sources": [
+  {"name": "Example AI", "folder": "Newsletters", "from": "news@example.com", "from_name": "Example AI Daily", "max_per_day": 1},
+  {"name": "Example Habits", "folder": "Weekly", "from": "james@example.com", "max_per_day": 1}
+]
+```
+
+Selection, per run:
+
+- The mailbox is opened read-only: `EXAMINE` instead of `SELECT`, headers and bodies via `BODY.PEEK[]` only. Messages are never marked `\Seen`, moved, copied or deleted.
+- Candidates are searched with IMAP `SINCE` (date granularity) and then filtered on the message's internal date to the same `[since, until)` window as the RSS digest.
+- `from` must equal the sender address (case-insensitive); `from_name` and `subject_match`, when set, must also match (case-insensitive, substring for the subject). `from_name` exists because senders such as TLDR run several editions from one address.
+- At most `max_per_day` newest emails are kept per source, then at most `max_emails_total` newest across all sources. Every drop is logged with its reason, and duplicate Message-IDs are dropped once per run.
+- Bodies prefer the `text/html` part, falling back to paragraphs from `text/plain`, and are decoded with the declared charset. The existing sanitizer removes scripts, styles, iframes, forms and inline CSS; **all images are stripped** (tracking pixels and logos included) while links are kept.
+- Accepted emails are logged with source, subject, received time, word count and estimated reading minutes at 220 wpm.
+
+Failures never block the digest: if a folder cannot be read, the error is logged with the source and folder, the remaining sources and all RSS entries still build and send, and the process exits non-zero at the end to flag the partial failure. If every email source fails, the RSS-only digest still goes out.
+
+Email bodies are used as-is: links in them are never fetched or followed, and no remote content is downloaded from them. `email_sources` empty (or absent) turns the feature off entirely and all IMAP fields are ignored.
 
 ### Web UI
 
@@ -148,6 +188,18 @@ services:
 | `log_file` | File to append log lines to; stdout/stderr always get them too | Optional; empty disables file logging |
 | `max_part_bytes` | Target size of each EPUB part | Default `4500000`; must be 100000–50000000 (Amazon's per-attachment limit) |
 | `web_token` | Shared secret for the web UI login | Required only with `-serve`; the server refuses to start if empty |
+| `imap_host` | IMAP server for email sources | Default `imap.zoho.in`; only read when `email_sources` is non-empty |
+| `imap_port` | IMAP implicit-TLS port | Default `993`; 1–65535 |
+| `imap_username` | IMAP username | Required when `email_sources` is non-empty |
+| `imap_password` | IMAP password or app password | Required when `email_sources` is non-empty |
+| `max_emails_total` | Most emails in one digest, newest first across sources | Default `5`; at least 1 |
+| `email_sources` | Array of `{name, folder, from, from_name, subject_match, max_per_day}` | Empty or absent disables email sources |
+| `email_sources[].name` | Section name in the digest | Required |
+| `email_sources[].folder` | IMAP folder to read read-only | Required |
+| `email_sources[].from` | Sender address, matched exactly and case-insensitively | Required |
+| `email_sources[].from_name` | Sender display name, matched exactly | Optional |
+| `email_sources[].subject_match` | Case-insensitive subject substring | Optional |
+| `email_sources[].max_per_day` | Newest emails kept per source per run | Default `1` |
 
 Mode rules:
 
@@ -175,11 +227,12 @@ The generated CSS is tuned for e-ink readers and for the Kindle's own accessibil
 ## How it works
 
 1. **Fetch** — lists feeds and pages through `/v1/entries` for entries inside the window (last 24 hours by default, or `-since`/`-until`), sorted by feed title and newest first.
-2. **Sanitize** — parses each entry's HTML, drops non-content elements, and rewrites image references.
-3. **Images** — downloads each image concurrently (bounded), flattens it onto white, downscales to ≤800px wide, re-encodes as JPEG q75, and drops the largest images if an article exceeds its 2.5 MB image budget.
-4. **Build** — groups the digest by feed with a separator, Contents and Index page per part (collection mode gets the Index only), and writes each EPUB3.
-5. **Pack** — greedily fills parts by estimated size, pulls each cut back to the last feed boundary if the shortened part is still at least half of `max_part_bytes`, then verifies the real file size against the 50 MB hard cap, splitting or shrinking only when it overflows.
-6. **Send** — emails each part to the Kindle address over authenticated TLS SMTP, then exits non-zero if anything failed.
+2. **Email sources** — when configured, reads each folder read-only over IMAP, filters by sender, window and caps, and decodes the selected messages into entries alongside the feed entries.
+3. **Sanitize** — parses each entry's HTML, drops non-content elements, and rewrites image references. Email bodies skip image handling entirely; their images were already stripped.
+4. **Images** — downloads each image concurrently (bounded), flattens it onto white, downscales to ≤800px wide, re-encodes as JPEG q75, and drops the largest images if an article exceeds its 2.5 MB image budget.
+5. **Build** — groups the digest by feed or email source with a separator, Contents and Index page per part (collection mode gets the Index only), and writes each EPUB3.
+6. **Pack** — greedily fills parts by estimated size, pulls each cut back to the last feed boundary if the shortened part is still at least half of `max_part_bytes`, then verifies the real file size against the 50 MB hard cap, splitting or shrinking only when it overflows.
+7. **Send** — emails each part to the Kindle address over authenticated TLS SMTP, then exits non-zero if anything failed.
 
 ## License
 
