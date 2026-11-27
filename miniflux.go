@@ -57,6 +57,11 @@ func newMinifluxClient(baseURL, token string) *minifluxClient {
 // Miniflux's offset pagination until total is covered. No status filter is
 // sent, so both read and unread entries are included.
 func (c *minifluxClient) fetchEntries(ctx context.Context, after time.Time) ([]apiEntry, error) {
+	return c.fetchEntriesWindow(ctx, after, time.Time{})
+}
+
+// fetchEntriesWindow is fetchEntries with an optional exclusive upper bound.
+func (c *minifluxClient) fetchEntriesWindow(ctx context.Context, after, before time.Time) ([]apiEntry, error) {
 	var all []apiEntry
 	for offset := 0; ; {
 		q := url.Values{
@@ -64,6 +69,9 @@ func (c *minifluxClient) fetchEntries(ctx context.Context, after time.Time) ([]a
 			"published_after": {strconv.FormatInt(after.Unix(), 10)},
 			"limit":           {strconv.Itoa(minifluxPageSize)},
 			"offset":          {strconv.Itoa(offset)},
+		}
+		if !before.IsZero() {
+			q.Set("published_before", strconv.FormatInt(before.Unix(), 10))
 		}
 		var page entriesPage
 		if err := c.getJSON(ctx, "/v1/entries", q, &page); err != nil {
@@ -74,6 +82,46 @@ func (c *minifluxClient) fetchEntries(ctx context.Context, after time.Time) ([]a
 		if len(page.Entries) == 0 || offset >= page.Total {
 			break
 		}
+	}
+	return all, nil
+}
+
+// fetchFeedEntries returns the newest limit entries of one feed, newest first,
+// paging through the feed's entries in 100-entry batches.
+func (c *minifluxClient) fetchFeedEntries(ctx context.Context, feedID int64, limit int) ([]apiEntry, error) {
+	return c.fetchFeedEntriesWindow(ctx, feedID, limit, time.Time{}, time.Time{})
+}
+
+// fetchFeedEntriesWindow is fetchFeedEntries restricted to [since, until).
+func (c *minifluxClient) fetchFeedEntriesWindow(ctx context.Context, feedID int64, limit int, since, until time.Time) ([]apiEntry, error) {
+	var all []apiEntry
+	for offset := 0; offset < limit; {
+		size := min(limit-offset, minifluxPageSize)
+		q := url.Values{
+			"limit":     {strconv.Itoa(size)},
+			"offset":    {strconv.Itoa(offset)},
+			"order":     {"published_at"},
+			"direction": {"desc"},
+		}
+		if !since.IsZero() {
+			q.Set("published_after", strconv.FormatInt(since.Unix(), 10))
+		}
+		if !until.IsZero() {
+			q.Set("published_before", strconv.FormatInt(until.Unix(), 10))
+		}
+		var page entriesPage
+		path := fmt.Sprintf("/v1/feeds/%d/entries", feedID)
+		if err := c.getJSON(ctx, path, q, &page); err != nil {
+			return nil, fmt.Errorf("fetching entries for feed %d at offset %d: %w", feedID, offset, err)
+		}
+		all = append(all, page.Entries...)
+		offset += len(page.Entries)
+		if len(page.Entries) == 0 || len(page.Entries) < size || offset >= page.Total {
+			break
+		}
+	}
+	if len(all) > limit {
+		all = all[:limit]
 	}
 	return all, nil
 }

@@ -38,10 +38,10 @@ func TestPackGreedyGroupsByEstimate(t *testing.T) {
 	}
 	// Each estimate is 24000; a part holds three.
 	p := &packer{
-		maxPart:   72000,
-		dateLabel: "27 Nov 2026",
-		build:     exactBuild(1),
-		shrink:    func(*preparedEntry) bool { return false },
+		maxPart:  72000,
+		baseName: "Daily Digest - 27 Nov 2026",
+		build:    exactBuild(1),
+		shrink:   func(*preparedEntry) bool { return false },
 	}
 	parts, err := p.pack(entries, t.TempDir())
 	if err != nil {
@@ -67,15 +67,15 @@ func TestPackGreedyGroupsByEstimate(t *testing.T) {
 
 func TestPackRepairsOverflowBySplitting(t *testing.T) {
 	entries := []*preparedEntry{fakeEntry("a", 0), fakeEntry("b", 0)}
-	// Two entries estimate 40000; scale 200 writes 8 MB, over the hard limit.
-	// Splitting leaves two 4 MB parts.
+	// Two entries estimate 40000; scale 1500 writes 60 MB, over the hard
+	// limit. Splitting leaves two 30 MB parts.
 	buildCalls := 0
 	p := &packer{
-		maxPart:   10_000_000,
-		dateLabel: "27 Nov 2026",
+		maxPart:  10_000_000,
+		baseName: "Daily Digest - 27 Nov 2026",
 		build: func(es []*preparedEntry, _ string) (int64, error) {
 			buildCalls++
-			return exactBuild(200)(es, "")
+			return exactBuild(1500)(es, "")
 		},
 		shrink: func(*preparedEntry) bool {
 			t.Error("shrink called for a multi-entry part")
@@ -96,8 +96,8 @@ func TestPackRepairsOverflowBySplitting(t *testing.T) {
 		if len(pt.entries) != 1 {
 			t.Errorf("part %d has %d entries, want 1", i+1, len(pt.entries))
 		}
-		if pt.size != 4_000_000 {
-			t.Errorf("part %d size = %d, want 4000000", i+1, pt.size)
+		if pt.size != 30_000_000 {
+			t.Errorf("part %d size = %d, want 30000000", i+1, pt.size)
 		}
 		if pt.size > hardMaxPartBytes {
 			t.Errorf("part %d exceeds hard limit", i+1)
@@ -109,9 +109,14 @@ func TestPackShrinksSingleOversizedEntry(t *testing.T) {
 	entry := fakeEntry("huge", 2_500_000, 3_000_000)
 	shrinkCalls := 0
 	p := &packer{
-		maxPart:   defaultMaxPartBytes,
-		dateLabel: "27 Nov 2026",
-		build:     exactBuild(1),
+		maxPart:  defaultMaxPartBytes,
+		baseName: "Daily Digest - 27 Nov 2026",
+		build: func(entries []*preparedEntry, _ string) (int64, error) {
+			if len(entries[0].images) > 0 {
+				return hardMaxPartBytes + 1, nil
+			}
+			return int64(2_500_000 + partOverhead), nil
+		},
 		shrink: func(e *preparedEntry) bool {
 			shrinkCalls++
 			if len(e.images) == 0 {
@@ -140,12 +145,14 @@ func TestPackShrinksSingleOversizedEntry(t *testing.T) {
 }
 
 func TestPackFailsWhenEntryCannotShrink(t *testing.T) {
-	entry := fakeEntry("huge", 6_000_000)
+	entry := fakeEntry("huge", 0)
 	p := &packer{
-		maxPart:   defaultMaxPartBytes,
-		dateLabel: "27 Nov 2026",
-		build:     exactBuild(1),
-		shrink:    func(*preparedEntry) bool { return false },
+		maxPart:  defaultMaxPartBytes,
+		baseName: "Daily Digest - 27 Nov 2026",
+		build: func([]*preparedEntry, string) (int64, error) {
+			return hardMaxPartBytes + 1, nil
+		},
+		shrink: func(*preparedEntry) bool { return false },
 	}
 	if _, err := p.pack([]*preparedEntry{entry}, t.TempDir()); err == nil {
 		t.Fatal("pack succeeded for an unshrinkable oversized entry")

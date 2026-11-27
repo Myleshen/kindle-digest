@@ -2,13 +2,17 @@
 
 A single-binary Go CLI that turns a [Miniflux](https://miniflux.app) newsreader's last 24 hours of entries into one or more EPUB volumes and emails them to your Kindle. It fetches entries from the Miniflux API, sanitizes the article HTML, downloads and normalizes the images for e-ink, packs the articles into size-capped parts, and sends each part as its own attachment.
 
-- Fetches every entry published in the last 24 hours (read or unread), following pagination.
+## Features
+
+- Fetches every entry published in the last 24 hours (read or unread), following pagination — or any explicit window with `-since`/`-until`.
 - Strips scripts, styles, iframes, forms, navs, buttons and SVG from article HTML.
 - Downloads article images, flattens transparency onto white, converts WebP to JPEG, resizes to at most 800px wide at JPEG quality 75, with a per-article image budget.
-- Builds EPUB3 volumes with a generated cover, e-ink-friendly CSS, one section per article and an automatic table of contents.
-- Greedy-packs articles into parts with a hard ≤5 MB cap, splitting and shrinking when needed.
-- Emails each part to your `@kindle.com` address, one message per part.
-- Runs generate-only (writes EPUBs, sends nothing) when mail settings are absent.
+- Builds EPUB3 volumes with a generated cover, e-ink-friendly CSS and one section per article.
+- Groups the daily digest by feed: sections are alphabetical by feed title (case-insensitive), articles are newest first, and each feed opens on a separator page with its title, article count and publication dates.
+- Adds a hand-built Contents page per part linking to those feed sections, plus an A–Z Index of every article in the part (`#` for titles starting with a digit, symbol or non-ASCII letter). Collection exports get the Index only.
+- Greedy-packs articles into parts, backing off to the last feed boundary instead of splitting a feed when the shortened part stays at least half full.
+- Emails each part to your `@kindle.com` address, one message per part, or runs generate-only when mail settings are absent.
+- Serves an optional single-page web UI (`-serve`) to trigger today's digest or a custom feed/window run and watch its status.
 - Logs to a file and exits non-zero on failure.
 
 ## Requirements
@@ -61,7 +65,8 @@ A complete config looks like this:
   "smtp_from": "you@example.com",
   "output_dir": "/opt/kindle-digest/output",
   "log_file": "/opt/kindle-digest/kindle-digest.log",
-  "max_part_bytes": 4500000
+  "max_part_bytes": 4500000,
+  "web_token": "long-random-string-for-the-web-ui"
 }
 ```
 
@@ -75,6 +80,56 @@ Schedule it with cron:
 
 ```cron
 45 6 * * * /path/to/kindle-digest -config /path/to/config.json
+```
+
+## Usage
+
+### One feed (collection mode)
+
+`-feed` exports a single feed instead of the daily digest. It accepts a numeric feed id, an exact title (case-insensitive) or a unique title substring; `-limit` defaults to 50 and is clamped to 1–500. Use `-list-feeds` to see the ids and titles Miniflux reports, one `<id>\t<title>` per line:
+
+```sh
+./kindle-digest -config config.json -list-feeds
+./kindle-digest -config config.json -feed "Ars Technica" -limit 20
+./kindle-digest -config config.json -feed 42 -limit 20 -send
+```
+
+On-demand runs are **generate-only** unless you pass `-send`; `-send` needs a complete SMTP block in the config and fails with an error otherwise. The plain daily run needs no `-send` (it sends from the config), so `-send` on its own is an error. The output is named `<Feed title> - N articles - <date>.epub`, with `, Part N` appended when the article count needs more than one volume.
+
+### Time windows
+
+`-since` and `-until` replace the default last-24-hours window. Both accept RFC3339 (`2026-11-26T06:00:00+05:30`), `2006-01-02T15:04` and `2006-01-02`; the two short forms are read in `Asia/Kolkata`, and a bare date means local midnight. The window is half-open, `[since, until)`, and `-until` defaults to now. `-until` without `-since` is an error.
+
+```sh
+./kindle-digest -config config.json -since 2026-11-26 -until 2026-11-27 -send
+```
+
+Windowed runs are named `Daily Digest - 26 Nov 2026 to 27 Nov 2026.epub` (a single date when the window sits inside one day). **A windowed run only sends with an explicit `-send`** — the plain daily cron run keeps auto-sending from the config. Combine with `-feed` for one feed's window.
+
+### Web UI
+
+`-serve <addr>` starts a small dashboard. The config must set `web_token`; the process refuses to start without it and never logs the token. Sign in once with that token and the browser keeps an HttpOnly cookie for 30 days.
+
+```sh
+./kindle-digest -config config.json -serve 0.0.0.0:8090
+```
+
+Two actions: **Send today's digest now** (the same daily run as cron, following the config's send mode) and a **custom run** — any feed or all feeds, optional since/until dates, a limit of 1–500 and an explicit *Send to Kindle* checkbox. The page polls `/api/status`, so the current run and the last five runs (kept in memory, lost on restart) show their outcome, parts and sizes without a reload. Only one run happens at a time: the UI single-flights and takes the same `flock` in `output_dir` as a CLI or cron run, so overlapping runs are rejected instead of racing.
+
+The UI deliberately has no EPUB download or file browser — it triggers runs and reports status, and files stay on disk under `output_dir`. It has no TLS or user management of its own, so put it behind your reverse proxy or VPN and treat `web_token` like a password.
+
+Docker Compose (Alpine plus the cross-built binary; the project directory is bind-mounted at the same absolute path so the paths in `config.json` keep working):
+
+```yaml
+services:
+  kindle-digest:
+    image: alpine:3.20
+    command: sh -c "apk add --no-cache ca-certificates && exec /opt/kindle-digest/kindle-digest -config /opt/kindle-digest/config.json -serve 0.0.0.0:8090"
+    volumes:
+      - /opt/kindle-digest:/opt/kindle-digest
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
 ```
 
 ## Configuration
@@ -91,7 +146,8 @@ Schedule it with cron:
 | `smtp_from` | From address; must be on Amazon's approved sender list | Required when `kindle_email` is set |
 | `output_dir` | Directory for generated EPUBs; each run writes to `<output_dir>/YYYY-MM-DD/` | Required |
 | `log_file` | File to append log lines to; stdout/stderr always get them too | Optional; empty disables file logging |
-| `max_part_bytes` | Target size of each EPUB part | Default `4500000`; must be 100000–5000000 |
+| `max_part_bytes` | Target size of each EPUB part | Default `4500000`; must be 100000–50000000 (Amazon's per-attachment limit) |
+| `web_token` | Shared secret for the web UI login | Required only with `-serve`; the server refuses to start if empty |
 
 Mode rules:
 
@@ -99,22 +155,31 @@ Mode rules:
 - `kindle_email` set and all SMTP fields present → **send mode**. One email per part, with a pause between sends.
 - `kindle_email` set but any SMTP field missing → **fatal config error**; the run exits non-zero before doing anything.
 
+## Typography
+
+The generated CSS is tuned for e-ink readers and for the Kindle's own accessibility settings:
+
+- Only relative font sizes (`1em`, `1.6em`, `1.3em`, `1.1em`, `0.85em`, `0.9em`), never `px` or `pt`, so the Kindle's size slider and per-book font settings keep working.
+- No embedded font files. The stacks name fonts already on the device — Bookerly/Caecilia for body text, Amazon Ember for headings, Courier for code — and fall back to Georgia/Arial/monospace elsewhere. Embedding fonts would bloat every part, override the reader's chosen typeface and defeat those same controls.
+- Left-aligned text and 1.5 line-height rather than justified text, which avoids the wide word gaps e-ink is prone to, and EPUB `dc:language` `en` so hyphenation and the dictionary work.
+
 ## Kindle gotchas
 
 - **The attachment filename becomes the book title in your Kindle library.** This tool names parts `Daily Digest - <date>, Part N.epub` in pure ASCII for that reason. Non-ASCII filenames came out malformed as titles.
 - **Zoho Mail on the India or EU datacenter needs the regional SMTP host.** Accounts hosted on Zoho's Indian datacenter must use `smtp.zoho.in`, and EU accounts `smtp.zoho.eu`; the generic `smtp.zoho.com` endpoint fails authentication with SMTP 535 errors for those accounts.
-- **Amazon caps email attachments at 25 files per message and 50 MB per file.** Large or complex EPUBs are also rejected by some send-to-Kindle paths regardless, so parts default to a 4.5 MB target with a hard 5 MB ceiling. More than one part per day is normal.
+- **Amazon caps email attachments at 25 files per message and 50 MB per file.** Large or complex EPUBs are also rejected by some send-to-Kindle paths regardless, so parts default to a 4.5 MB target; `max_part_bytes` can be raised to 50 MB, Amazon's per-attachment limit. More than one part per day is normal.
 - **Digest quality depends on what Miniflux stores.** Feeds that only publish summaries (common for paywalled or aggregated sites) produce thin articles. Enable the per-feed **Fetch original content** option in Miniflux so the digest gets the full article HTML.
 - **Send-to-Kindle converts EPUBs to AZW3 a few minutes after delivery.** The book may appear briefly as a document and then re-render; that is normal.
 - Dates and the 24-hour window are computed in `Asia/Kolkata` (IST), matching the intended daily reading schedule.
 
 ## How it works
 
-1. **Fetch** — lists feeds and pages through `/v1/entries?published_after=<unix>` for entries published in the last 24 hours, sorted oldest first.
+1. **Fetch** — lists feeds and pages through `/v1/entries` for entries inside the window (last 24 hours by default, or `-since`/`-until`), sorted by feed title and newest first.
 2. **Sanitize** — parses each entry's HTML, drops non-content elements, and rewrites image references.
 3. **Images** — downloads each image concurrently (bounded), flattens it onto white, downscales to ≤800px wide, re-encodes as JPEG q75, and drops the largest images if an article exceeds its 2.5 MB image budget.
-4. **Pack** — greedily groups articles into parts by estimated size, builds each EPUB, and verifies the real file size against the 5 MB hard cap, splitting the part or shrinking its images/text if it overflows.
-5. **Send** — emails each part to the Kindle address over authenticated TLS SMTP, then exits non-zero if anything failed.
+4. **Build** — groups the digest by feed with a separator, Contents and Index page per part (collection mode gets the Index only), and writes each EPUB3.
+5. **Pack** — greedily fills parts by estimated size, pulls each cut back to the last feed boundary if the shortened part is still at least half of `max_part_bytes`, then verifies the real file size against the 50 MB hard cap, splitting or shrinking only when it overflows.
+6. **Send** — emails each part to the Kindle address over authenticated TLS SMTP, then exits non-zero if anything failed.
 
 ## License
 

@@ -10,7 +10,7 @@ import (
 
 const (
 	defaultMaxPartBytes = 4_500_000
-	hardMaxPartBytes    = 5_000_000
+	hardMaxPartBytes    = 50_000_000
 	minMaxPartBytes     = 100_000
 )
 
@@ -27,6 +27,7 @@ type Config struct {
 	OutputDir      string `json:"output_dir"`
 	LogFile        string `json:"log_file"`
 	MaxPartBytes   int    `json:"max_part_bytes"`
+	WebToken       string `json:"web_token"`
 }
 
 func loadConfig(path string) (*Config, error) {

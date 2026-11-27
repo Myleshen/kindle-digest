@@ -23,9 +23,8 @@ type mailer struct {
 }
 
 // send emails one message per part, sequentially, with a pause between sends.
-func (m *mailer) send(ctx context.Context, parts []*part, dateLabel string) error {
-	subject := "Daily Digest — " + dateLabel
-	body := digestBody(parts, dateLabel)
+func (m *mailer) send(ctx context.Context, parts []*part, subject string) error {
+	body := digestBody(parts, subject)
 
 	for i, pt := range parts {
 		if err := m.sendOne(ctx, pt, subject, body); err != nil {
@@ -87,14 +86,14 @@ func newDigestMessage(cfg *Config, pt *part, subject, body string) (*mail.Msg, e
 	return msg, nil
 }
 
-func digestBody(parts []*part, dateLabel string) string {
+func digestBody(parts []*part, subject string) string {
 	totalEntries := 0
 	for _, pt := range parts {
 		totalEntries += len(pt.entries)
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Daily Digest — %s\n\n", dateLabel)
+	fmt.Fprintf(&b, "%s\n\n", subject)
 	fmt.Fprintf(&b, "%d entries in %d %s.\n\n", totalEntries, len(parts), plural(len(parts), "part", "parts"))
 	for i, pt := range parts {
 		fmt.Fprintf(&b, "Part %d: %s (%d %s)\n",

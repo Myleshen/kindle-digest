@@ -19,7 +19,7 @@ func TestBuildEPUBStructure(t *testing.T) {
 		makeTestEPUBEntry(t, "Second Post", 1),
 	}
 	dst := filepath.Join(t.TempDir(), "digest.epub")
-	size, err := buildEPUB(context.Background(), entries, "27 Nov 2026", dst)
+	size, err := buildEPUB(context.Background(), entries, "Daily Digest - 27 Nov 2026", "27 Nov 2026", dst)
 	if err != nil {
 		t.Fatalf("buildEPUB: %v", err)
 	}

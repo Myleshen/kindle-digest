@@ -23,17 +23,30 @@ func partEstimate(entries []*preparedEntry) int {
 	return total
 }
 
-func partFilename(dateLabel string, n int) string {
-	return fmt.Sprintf("Daily Digest - %s, Part %d.epub", dateLabel, n)
+// feedCutEnd pulls a greedy cut back to the start of the feed it would split,
+// but only if the shortened part stays at least half full. A feed that alone
+// exceeds the cap still gets cut mid-feed.
+func feedCutEnd(entries []*preparedEntry, start, end, maxPart int) int {
+	if end >= len(entries) || entries[end].FeedTitle != entries[end-1].FeedTitle {
+		return end
+	}
+	cut := end - 1
+	for cut > start && entries[cut].FeedTitle == entries[cut-1].FeedTitle {
+		cut--
+	}
+	if cut > start && partEstimate(entries[start:cut])*2 >= maxPart {
+		return cut
+	}
+	return end
 }
 
 // packer greedily groups entries, then verifies each written EPUB against the
 // hard size limit and repairs overflowing parts by splitting or shrinking.
 type packer struct {
-	maxPart   int
-	dateLabel string
-	build     func(entries []*preparedEntry, dst string) (int64, error)
-	shrink    func(*preparedEntry) bool
+	maxPart  int
+	baseName string
+	build    func(entries []*preparedEntry, dst string) (int64, error)
+	shrink   func(*preparedEntry) bool
 }
 
 func (p *packer) pack(entries []*preparedEntry, dir string) (parts []*part, err error) {
@@ -47,20 +60,21 @@ func (p *packer) pack(entries []*preparedEntry, dir string) (parts []*part, err 
 		}
 	}()
 
-	var current []*preparedEntry
-	flush := func() {
-		if len(current) > 0 {
-			parts = append(parts, &part{entries: current})
-			current = nil
+	start := 0
+	for start < len(entries) {
+		end := start
+		total := 0
+		for end < len(entries) && total+entries[end].Estimate() <= p.maxPart {
+			total += entries[end].Estimate()
+			end++
 		}
-	}
-	for _, e := range entries {
-		if len(current) > 0 && partEstimate(current)+e.Estimate() > p.maxPart {
-			flush()
+		if end == start {
+			end = start + 1
 		}
-		current = append(current, e)
+		end = feedCutEnd(entries, start, end, p.maxPart)
+		parts = append(parts, &part{entries: entries[start:end]})
+		start = end
 	}
-	flush()
 
 	for i := 0; i < len(parts); i++ {
 		for {
@@ -100,7 +114,7 @@ func (p *packer) pack(entries []*preparedEntry, dir string) (parts []*part, err 
 	}
 
 	for i, pt := range parts {
-		pt.path = filepath.Join(dir, partFilename(p.dateLabel, i+1))
+		pt.path = filepath.Join(dir, fmt.Sprintf("%s, Part %d.epub", p.baseName, i+1))
 		if err := os.Rename(pt.tmpPath, pt.path); err != nil {
 			return nil, fmt.Errorf("naming part %d: %w", i+1, err)
 		}
