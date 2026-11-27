@@ -194,10 +194,20 @@ func runDigest(cfg *Config, log *logger, started time.Time, opts options) (*runR
 		}
 	}
 	entries = filtered
+
+	var emailFailures int
+	if len(cfg.EmailSources) > 0 {
+		emails, failures := collectEmails(func() (mailboxConn, error) {
+			return newMailbox(cfg)
+		}, cfg.EmailSources, since, until, cfg.MaxEmailsTotal, log)
+		emailFailures = failures
+		entries = append(entries, emailEntries(emails, feeds)...)
+	}
+
 	if len(entries) == 0 {
 		log.info("no entries in window (published in [%s, %s))",
 			since.Format(time.RFC3339), until.Format(time.RFC3339))
-		return &runResult{Windowed: windowed}, nil
+		return &runResult{Windowed: windowed}, emailFailureError(emailFailures)
 	}
 
 	sortEntriesByFeed(entries, feeds)
@@ -279,5 +289,18 @@ func runDigest(cfg *Config, log *logger, started time.Time, opts options) (*runR
 
 	log.info("summary: entries=%d parts=%d bytes=%d mode=%s duration=%s",
 		len(prepared), len(parts), totalBytes, result.Mode, result.Duration)
+	if err := emailFailureError(emailFailures); err != nil {
+		log.error("email sources: %d error(s); the digest above was built without the failed emails", emailFailures)
+		return result, err
+	}
 	return result, nil
+}
+
+// emailFailureError makes IMAP trouble exit non-zero without blocking the RSS
+// digest or the send.
+func emailFailureError(failures int) error {
+	if failures == 0 {
+		return nil
+	}
+	return fmt.Errorf("email collection had %d error(s); see the log", failures)
 }

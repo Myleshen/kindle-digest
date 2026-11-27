@@ -10,5 +10,20 @@
   "output_dir": "/opt/kindle-digest/output",
   "log_file": "/opt/kindle-digest/kindle-digest.log",
   "max_part_bytes": 4500000,
-  "web_token": ""
+  "web_token": "",
+  "imap_host": "imap.zoho.in",
+  "imap_port": 993,
+  "imap_username": "",
+  "imap_password": "",
+  "max_emails_total": 5,
+  "email_sources": [
+    {
+      "name": "Example Newsletter",
+      "folder": "Newsletters",
+      "from": "newsletter@example.com",
+      "from_name": "",
+      "subject_match": "",
+      "max_per_day": 1
+    }
+  ]
 }

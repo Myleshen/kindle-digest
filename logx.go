@@ -13,6 +13,7 @@ import (
 type logger struct {
 	mu   sync.Mutex
 	file *os.File
+	buf  io.Writer // tests capture both streams here; nil in production
 }
 
 func newLogger(path string) (*logger, error) {
@@ -38,6 +39,9 @@ func (l *logger) write(w io.Writer, format string, args ...any) {
 	line := fmt.Sprintf("%s %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.buf != nil {
+		w = l.buf
+	}
 	_, _ = io.WriteString(w, line)
 	if l.file != nil {
 		_, _ = io.WriteString(l.file, line)
