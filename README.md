@@ -5,7 +5,7 @@ A single-binary Go CLI that turns a [Miniflux](https://miniflux.app) newsreader'
 ## Features
 
 - Fetches every entry published in the last 24 hours (read or unread), following pagination — or any explicit window with `-since`/`-until`.
-- Strips scripts, styles, iframes, forms, navs, buttons and SVG from article HTML.
+- Strips scripts, styles, iframes, forms, navs, buttons, SVG and embedded media — `video`, `audio`, `object`, `embed`, `canvas`, `frame`, `frameset`, `applet` — from article HTML, subtrees included. Images, `picture` and `figure` are kept.
 - Downloads article images, flattens transparency onto white, converts WebP to JPEG, resizes to at most 800px wide at JPEG quality 75, with a per-article image budget.
 - Builds EPUB3 volumes with a generated cover, e-ink-friendly CSS and one section per article.
 - Groups the daily digest by feed: sections are alphabetical by feed title (case-insensitive), articles are newest first, and each feed opens on a separator page with its title, article count and publication dates.
@@ -68,6 +68,10 @@ A complete config looks like this:
   "log_file": "/opt/kindle-digest/kindle-digest.log",
   "max_part_bytes": 4500000,
   "web_token": "long-random-string-for-the-web-ui",
+  "ntfy_url": "https://ntfy.example.org",
+  "ntfy_topic": "kindle-digest",
+  "ntfy_token": "ntfy-access-token",
+  "ntfy_click": "",
   "imap_host": "imap.zoho.in",
   "imap_port": 993,
   "imap_username": "you@example.com",
@@ -158,6 +162,17 @@ Two actions: **Send today's digest now** (the same daily run as cron, following 
 
 The UI deliberately has no EPUB download or file browser — it triggers runs and reports status, and files stay on disk under `output_dir`. It has no TLS or user management of its own, so put it behind your reverse proxy or VPN and treat `web_token` like a password.
 
+### ntfy notifications
+
+Set `ntfy_url` (for example `https://ntfy.example.org`), `ntfy_topic` and a token with publish permission on that topic as `ntfy_token` to get a push when a run finishes. `ntfy_click` is optional: it is the URL opened when the notification is tapped. All four fields are optional, but the first three must be set together — a partial block is a fatal config error.
+
+- **Send mode, success:** one notification titled `Daily Digest ready` (the run's own title for windowed and collection runs) with the article count, part count and total size. Priority 3, tag `books`.
+- **Any failed run:** one notification titled `Digest failed` with the error text (truncated to 200 characters). Priority 4, tag `warning`.
+- **Generate-only runs:** no notification, because nothing reached the Kindle.
+- **Best-effort:** if the notification itself fails, the error is logged and the run's exit code is unchanged — a broken ntfy server never fails the digest.
+
+The ntfy server must allow the token to publish to the topic (ntfy's write-only access token covers this).
+
 Docker Compose (Alpine plus the cross-built binary; the project directory is bind-mounted at the same absolute path so the paths in `config.json` keep working):
 
 ```yaml
@@ -188,6 +203,10 @@ services:
 | `log_file` | File to append log lines to; stdout/stderr always get them too | Optional; empty disables file logging |
 | `max_part_bytes` | Target size of each EPUB part | Default `4500000`; must be 100000–50000000 (Amazon's per-attachment limit) |
 | `web_token` | Shared secret for the web UI login | Required only with `-serve`; the server refuses to start if empty |
+| `ntfy_url` | Base URL of your ntfy server, e.g. `https://ntfy.example.org` | Optional; required together with `ntfy_topic` and `ntfy_token` |
+| `ntfy_topic` | ntfy topic to publish on | Optional; required together with `ntfy_url` and `ntfy_token` |
+| `ntfy_token` | ntfy access token with publish permission on the topic | Optional; required together with `ntfy_url` and `ntfy_topic` |
+| `ntfy_click` | URL opened when the notification is tapped | Optional; valid alone or with the other ntfy fields |
 | `imap_host` | IMAP server for email sources | Default `imap.zoho.in`; only read when `email_sources` is non-empty |
 | `imap_port` | IMAP implicit-TLS port | Default `993`; 1–65535 |
 | `imap_username` | IMAP username | Required when `email_sources` is non-empty |
@@ -221,6 +240,7 @@ The generated CSS is tuned for e-ink readers and for the Kindle's own accessibil
 - **Zoho Mail on the India or EU datacenter needs the regional SMTP host.** Accounts hosted on Zoho's Indian datacenter must use `smtp.zoho.in`, and EU accounts `smtp.zoho.eu`; the generic `smtp.zoho.com` endpoint fails authentication with SMTP 535 errors for those accounts.
 - **Amazon caps email attachments at 25 files per message and 50 MB per file.** Large or complex EPUBs are also rejected by some send-to-Kindle paths regardless, so parts default to a 4.5 MB target; `max_part_bytes` can be raised to 50 MB, Amazon's per-attachment limit. More than one part per day is normal.
 - **Digest quality depends on what Miniflux stores.** Feeds that only publish summaries (common for paywalled or aggregated sites) produce thin articles. Enable the per-feed **Fetch original content** option in Miniflux so the digest gets the full article HTML.
+- **One embedded video can turn the whole digest into a PDF.** Amazon's EPUB converter silently renders a book as PDF when it finds embedded media, and a single `<video>` in one article is enough. E-ink EPUBs do not need media embeds, so the sanitizer removes them and their subtrees; a `<source>` inside a kept `<picture>` is untouched.
 - **Send-to-Kindle converts EPUBs to AZW3 a few minutes after delivery.** The book may appear briefly as a document and then re-render; that is normal.
 - Dates and the 24-hour window are computed in `Asia/Kolkata` (IST), matching the intended daily reading schedule.
 

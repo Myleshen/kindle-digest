@@ -46,6 +46,14 @@ type Config struct {
 	MaxPartBytes   int    `json:"max_part_bytes"`
 	WebToken       string `json:"web_token"`
 
+	// ntfy notifications are on only when NtfyURL, NtfyTopic and NtfyToken
+	// are all set; a partial block is a fatal config error. NtfyClick is an
+	// optional URL opened when the notification is tapped.
+	NtfyURL   string `json:"ntfy_url"`
+	NtfyTopic string `json:"ntfy_topic"`
+	NtfyToken string `json:"ntfy_token"`
+	NtfyClick string `json:"ntfy_click"`
+
 	IMAPHost       string        `json:"imap_host"`
 	IMAPPort       int           `json:"imap_port"`
 	IMAPUsername   string        `json:"imap_username"`
@@ -134,6 +142,25 @@ func (c *Config) validate() error {
 		}
 		if c.SMTPPort < 1 || c.SMTPPort > 65535 {
 			return fmt.Errorf("smtp_port must be between 1 and 65535, got %d", c.SMTPPort)
+		}
+	}
+
+	if c.NtfyURL != "" || c.NtfyTopic != "" || c.NtfyToken != "" {
+		var missing []string
+		for _, f := range []struct {
+			name  string
+			value string
+		}{
+			{"ntfy_url", c.NtfyURL},
+			{"ntfy_topic", c.NtfyTopic},
+			{"ntfy_token", c.NtfyToken},
+		} {
+			if strings.TrimSpace(f.value) == "" {
+				missing = append(missing, f.name)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("ntfy settings are incomplete: missing %s", strings.Join(missing, ", "))
 		}
 	}
 

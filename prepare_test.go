@@ -97,6 +97,85 @@ func TestPrepareEntrySanitizesAndRewritesImages(t *testing.T) {
 	}
 }
 
+func TestSanitizeDropsEmbeddedMedia(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		absent  []string
+		present []string
+	}{
+		{
+			name: "embedded media elements are removed with their subtrees",
+			input: `<div>
+				<video controls=""><source src="https://example.org/2.webm" type="video/webm"/>video fallback</video>
+				<audio controls=""><source src="https://example.org/a.mp3" type="audio/mpeg"/>audio fallback</audio>
+				<iframe src="https://evil.example">iframe fallback</iframe>
+				<object data="https://example.org/x.swf">object fallback</object>
+				<embed src="https://example.org/y.swf"/>
+				<canvas>canvas fallback</canvas>
+				<p>keep this</p>
+			</div>`,
+			absent: []string{
+				"<video", "2.webm", "video fallback",
+				"<audio", "a.mp3", "audio fallback",
+				"<iframe", "iframe fallback",
+				"<object", "object fallback",
+				"<embed", "y.swf",
+				"<canvas", "canvas fallback",
+			},
+			present: []string{"keep this", "<p>"},
+		},
+		{
+			name:  "picture with source and img is kept",
+			input: `<figure><picture><source srcset="https://example.org/p.webp" type="image/webp"><img src="https://example.org/p.png" alt="pic"></picture><figcaption>caption</figcaption></figure>`,
+			present: []string{
+				"<figure", "<picture", "<source", "p.webp", "<img", "p.png", "<figcaption", "caption",
+			},
+		},
+		{
+			name:    "video inside a paragraph leaves the paragraph and text intact",
+			input:   `<p>before the clip <video controls=""><source src="https://example.org/v.webm" type="video/webm"/></video> after the clip</p>`,
+			absent:  []string{"<video", "v.webm"},
+			present: []string{"<p>", "before the clip", "after the clip"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := sanitizeFragment(t, tt.input)
+			for _, banned := range tt.absent {
+				if strings.Contains(body, banned) {
+					t.Errorf("output still contains %q:\n%s", banned, body)
+				}
+			}
+			for _, want := range tt.present {
+				if !strings.Contains(body, want) {
+					t.Errorf("output is missing %q:\n%s", want, body)
+				}
+			}
+		})
+	}
+}
+
+// sanitizeFragment runs the same parse-and-strip path prepareEntry uses.
+func sanitizeFragment(t *testing.T, content string) string {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("parsing HTML: %v", err)
+	}
+	body := findElement(doc, "body")
+	if body == nil {
+		t.Fatal("parsed HTML has no body element")
+	}
+	stripElements(body)
+	out, err := renderChildren(body)
+	if err != nil {
+		t.Fatalf("rendering HTML: %v", err)
+	}
+	return out
+}
+
 func TestProcessImageFlattensAlpha(t *testing.T) {
 	out, err := processImage(makeTestPNG(100, 40, true))
 	if err != nil {

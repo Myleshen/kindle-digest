@@ -145,6 +145,59 @@ func TestLoadConfigValidationErrors(t *testing.T) {
 	}
 }
 
+func TestLoadConfigNtfyValidation(t *testing.T) {
+	full := map[string]string{
+		"ntfy_url":   "https://ntfy.example.org",
+		"ntfy_topic": "kindle-digest",
+		"ntfy_token": "tok",
+	}
+	tests := []struct {
+		name     string
+		fields   []string
+		click    bool
+		wantErr  string
+		notifyOn bool
+	}{
+		{"none", nil, false, "", false},
+		{"all", []string{"ntfy_url", "ntfy_topic", "ntfy_token"}, false, "", true},
+		{"click only", nil, true, "", false},
+		{"all plus click", []string{"ntfy_url", "ntfy_topic", "ntfy_token"}, true, "", true},
+		{"url only", []string{"ntfy_url"}, false, "missing ntfy_topic, ntfy_token", false},
+		{"topic only", []string{"ntfy_topic"}, false, "missing ntfy_url, ntfy_token", false},
+		{"token only", []string{"ntfy_token"}, false, "missing ntfy_url, ntfy_topic", false},
+		{"url and topic", []string{"ntfy_url", "ntfy_topic"}, false, "missing ntfy_token", false},
+		{"url and token", []string{"ntfy_url", "ntfy_token"}, false, "missing ntfy_topic", false},
+		{"topic and token", []string{"ntfy_topic", "ntfy_token"}, false, "missing ntfy_url", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := validConfig()
+			for _, field := range tt.fields {
+				raw[field] = full[field]
+			}
+			if tt.click {
+				raw["ntfy_click"] = "https://example.org/digest/"
+			}
+			cfg, err := loadConfig(writeConfigFile(t, raw))
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("loadConfig succeeded, want an error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			if cfg.notifyEnabled() != tt.notifyOn {
+				t.Errorf("notifyEnabled = %v, want %v", cfg.notifyEnabled(), tt.notifyOn)
+			}
+		})
+	}
+}
+
 func TestLoadConfigMissingFile(t *testing.T) {
 	if _, err := loadConfig(filepath.Join(t.TempDir(), "nope.json")); err == nil {
 		t.Fatal("loadConfig succeeded for a missing file")

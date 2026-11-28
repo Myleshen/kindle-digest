@@ -128,10 +128,15 @@ func newWebApp(cfg *Config, log *logger) *webApp {
 	}
 	a.runFn = func(opts options) (*runResult, error) {
 		started := time.Now()
+		var res *runResult
+		var err error
 		if opts.feed != "" {
-			return runCollection(a.cfg, a.log, started, opts)
+			res, err = runCollection(a.cfg, a.log, started, opts)
+		} else {
+			res, err = runDigest(a.cfg, a.log, started, opts)
 		}
-		return runDigest(a.cfg, a.log, started, opts)
+		notifyRun(a.cfg, a.log, res, err)
+		return res, err
 	}
 	a.feedsFn = func(ctx context.Context) ([]apiFeed, error) {
 		feeds, err := newMinifluxClient(cfg.MinifluxURL, cfg.MinifluxAPIKey).fetchFeeds(ctx)

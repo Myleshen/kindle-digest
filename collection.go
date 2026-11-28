@@ -238,6 +238,7 @@ func runCollection(cfg *Config, log *logger, started time.Time, opts options) (*
 		Mode:       "generate-only",
 		Duration:   time.Since(started).Round(time.Millisecond),
 		Windowed:   windowed,
+		Title:      base,
 	}
 	if opts.send && !opts.generateOnly {
 		result.Mode = "send"
