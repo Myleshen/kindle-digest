@@ -374,6 +374,9 @@ func TestRunDigestPerSourceFailureStillBuilds(t *testing.T) {
 	if result == nil || result.Entries != 2 {
 		t.Fatalf("result = %+v, want RSS entry plus good email", result)
 	}
+	if result.Emails != 1 {
+		t.Errorf("result.Emails = %d, want 1", result.Emails)
+	}
 	if !strings.Contains(logBuf.String(), `email source "Broken" (folder "Broken") failed`) {
 		t.Errorf("log missing the source ERROR line:\n%s", logBuf.String())
 	}

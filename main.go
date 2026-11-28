@@ -113,16 +113,19 @@ func run(configPath string, opts options) error {
 	}
 	defer unlock()
 
+	var result *runResult
 	switch {
 	case opts.feed != "":
-		_, err = runCollection(cfg, log, started, opts)
+		result, err = runCollection(cfg, log, started, opts)
 	default:
-		_, err = runDigest(cfg, log, started, opts)
+		result, err = runDigest(cfg, log, started, opts)
 	}
 	if err != nil {
 		log.fileOnly("fatal: %v", err)
+		notifyRun(cfg, log, result, err)
 		return err
 	}
+	notifyRun(cfg, log, result, nil)
 	return nil
 }
 
@@ -160,6 +163,11 @@ type runResult struct {
 	Mode       string
 	Duration   time.Duration
 	Windowed   bool
+	// Title is the notification title: the run's base, or "Daily Digest
+	// ready" for a plain daily run.
+	Title string
+	// Emails is how many email newsletters made it into the digest.
+	Emails int
 }
 
 func runDigest(cfg *Config, log *logger, started time.Time, opts options) (*runResult, error) {
@@ -195,12 +203,13 @@ func runDigest(cfg *Config, log *logger, started time.Time, opts options) (*runR
 	}
 	entries = filtered
 
-	var emailFailures int
+	var emailFailures, emailCount int
 	if len(cfg.EmailSources) > 0 {
 		emails, failures := collectEmails(func() (mailboxConn, error) {
 			return newMailbox(cfg)
 		}, cfg.EmailSources, since, until, cfg.MaxEmailsTotal, log)
 		emailFailures = failures
+		emailCount = len(emails)
 		entries = append(entries, emailEntries(emails, feeds)...)
 	}
 
@@ -265,6 +274,10 @@ func runDigest(cfg *Config, log *logger, started time.Time, opts options) (*runR
 			i+1, len(parts), filepath.Base(pt.path), pt.size, len(pt.entries))
 	}
 
+	notifyTitle := base
+	if !windowed {
+		notifyTitle = "Daily Digest ready"
+	}
 	result := &runResult{
 		Entries:    len(prepared),
 		Parts:      parts,
@@ -272,6 +285,8 @@ func runDigest(cfg *Config, log *logger, started time.Time, opts options) (*runR
 		Mode:       "generate-only",
 		Duration:   time.Since(started).Round(time.Millisecond),
 		Windowed:   windowed,
+		Title:      notifyTitle,
+		Emails:     emailCount,
 	}
 	if !opts.generateOnly && digestSendEnabled(cfg, windowed, opts.send) {
 		result.Mode = "send"

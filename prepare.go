@@ -27,14 +27,22 @@ const (
 )
 
 var dropElements = map[string]bool{
-	"script": true,
-	"style":  true,
-	"iframe": true,
-	"form":   true,
-	"nav":    true,
-	"button": true,
-	"svg":    true,
-	"ins":    true,
+	"script":   true,
+	"style":    true,
+	"iframe":   true,
+	"form":     true,
+	"nav":      true,
+	"button":   true,
+	"svg":      true,
+	"ins":      true,
+	"video":    true,
+	"audio":    true,
+	"object":   true,
+	"embed":    true,
+	"canvas":   true,
+	"frame":    true,
+	"frameset": true,
+	"applet":   true,
 }
 
 type preparedImage struct {
